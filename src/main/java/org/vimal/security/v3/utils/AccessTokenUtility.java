@@ -198,7 +198,7 @@ public class AccessTokenUtility {
                     encryptedDeviceIdsKey,
                     encryptedDeviceId,
                     now + ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS,
-                    ACCESS_TOKEN_EXPIRES_IN_DURATION
+                    REFRESH_TOKEN_EXPIRES_IN_DURATION
             );
             String encryptedAccessToken = encryptToken(signToken(buildTokenClaims(
                     user,
