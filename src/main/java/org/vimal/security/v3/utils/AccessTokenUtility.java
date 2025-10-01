@@ -389,18 +389,17 @@ public class AccessTokenUtility {
 
     private void proceedAndRevokeTokens(Set<String> encryptedKeys,
                                         Set<String> encryptedRefreshTokenKeys) throws Exception {
+        String decryptedRefreshToken;
         for (String encryptedRefreshToken : redisService.getAll(encryptedRefreshTokenKeys)) {
             if (encryptedRefreshToken != null) {
-                encryptedKeys.add(getEncryptedRefreshTokenMappingKeyUsingEncryptedRefreshToken(encryptedRefreshToken));
+                decryptedRefreshToken = genericAesRandomEncryptorDecryptor.decrypt(encryptedRefreshToken);
+                encryptedKeys.add(getEncryptedRefreshTokenMappingKey(decryptedRefreshToken));
+                encryptedKeys.add(getEncryptedRefreshTokenUserIdMappingKey(decryptedRefreshToken));
             }
         }
         if (!encryptedKeys.isEmpty()) {
             redisService.deleteAll(encryptedKeys);
         }
-    }
-
-    private String getEncryptedRefreshTokenMappingKeyUsingEncryptedRefreshToken(String encryptedRefreshToken) throws Exception {
-        return getEncryptedRefreshTokenMappingKey(genericAesRandomEncryptorDecryptor.decrypt(encryptedRefreshToken));
     }
 
     public void revokeTokensByUsersIds(Set<UUID> userIds) throws Exception {
