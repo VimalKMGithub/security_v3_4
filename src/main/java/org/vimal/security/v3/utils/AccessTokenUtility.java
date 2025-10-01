@@ -1,5 +1,6 @@
 package org.vimal.security.v3.utils;
 
+import io.getunleash.Unleash;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
@@ -23,6 +24,7 @@ import org.vimal.security.v3.models.PermissionModel;
 import org.vimal.security.v3.models.RoleModel;
 import org.vimal.security.v3.models.UserModel;
 import org.vimal.security.v3.repos.UserRepo;
+import org.vimal.security.v3.services.MailService;
 import org.vimal.security.v3.services.RedisService;
 
 import javax.crypto.SecretKey;
@@ -35,6 +37,8 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static org.vimal.security.v3.enums.AccessTokenClaims.*;
+import static org.vimal.security.v3.enums.FeatureFlags.EMAIL_CONFIRMATION_ON_NEW_SIGN_IN;
+import static org.vimal.security.v3.enums.MailType.NEW_SIGN_IN_CONFIRMATION;
 
 @Component
 public class AccessTokenUtility {
@@ -64,12 +68,16 @@ public class AccessTokenUtility {
     private final RedisService redisService;
     private final GenericAesRandomEncryptorDecryptor genericAesRandomEncryptorDecryptor;
     private final GenericAesStaticEncryptorDecryptor genericAesStaticEncryptorDecryptor;
+    private final Unleash unleash;
+    private final MailService mailService;
 
     public AccessTokenUtility(PropertiesConfig propertiesConfig,
                               UserRepo userRepo,
                               RedisService redisService,
                               GenericAesRandomEncryptorDecryptor genericAesRandomEncryptorDecryptor,
-                              GenericAesStaticEncryptorDecryptor genericAesStaticEncryptorDecryptor) throws NoSuchAlgorithmException {
+                              GenericAesStaticEncryptorDecryptor genericAesStaticEncryptorDecryptor,
+                              Unleash unleash,
+                              MailService mailService) throws NoSuchAlgorithmException {
         this.signingKey = Keys.hmacShaKeyFor(Decoders.BASE64
                 .decode(propertiesConfig.getAccessTokenSigningSecretKey()));
         this.encryptionKey = new SecretKeySpec(
@@ -81,6 +89,8 @@ public class AccessTokenUtility {
         this.redisService = redisService;
         this.genericAesRandomEncryptorDecryptor = genericAesRandomEncryptorDecryptor;
         this.genericAesStaticEncryptorDecryptor = genericAesStaticEncryptorDecryptor;
+        this.unleash = unleash;
+        this.mailService = mailService;
     }
 
     private Map<String, Object> buildTokenClaims(UserModel user,
@@ -222,12 +232,20 @@ public class AccessTokenUtility {
                 request
         );
         if (score == null || score < now + MILLI_SECONDS_TO_ADD_IN_NOW) {
-            redisService.addZSetMember(
+            Boolean newSignIn = redisService.addZSetMember(
                     encryptedDeviceIdsKey,
                     encryptedDeviceId,
                     now + ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS,
                     REFRESH_TOKEN_EXPIRES_IN_DURATION
             );
+            if (newSignIn != null && newSignIn && unleash.isEnabled(EMAIL_CONFIRMATION_ON_NEW_SIGN_IN.name())) {
+                mailService.sendEmailAsync(
+                        genericAesStaticEncryptorDecryptor.decrypt(user.getEmail()),
+                        "New Sign In Detected",
+                        "",
+                        NEW_SIGN_IN_CONFIRMATION
+                );
+            }
             String encryptedAccessToken = encryptToken(signToken(buildTokenClaims(
                     user,
                     request)));

@@ -57,20 +57,20 @@ public class RedisService {
         redisTemplate.delete(keys);
     }
 
-    public void addZSetMember(String key,
-                              String member,
-                              double score,
-                              Duration timeToLive) {
-        redisTemplate.opsForZSet()
+    public Boolean addZSetMember(String key,
+                                 String member,
+                                 double score,
+                                 Duration timeToLive) {
+        redisTemplate.expire(
+                key,
+                timeToLive
+        );
+        return redisTemplate.opsForZSet()
                 .add(
                         key,
                         member,
                         score
                 );
-        redisTemplate.expire(
-                key,
-                timeToLive
-        );
     }
 
     public Set<String> getAllZSetMembers(String key) {
