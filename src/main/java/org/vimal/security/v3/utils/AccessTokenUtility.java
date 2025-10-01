@@ -4,6 +4,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.servlet.http.HttpServletRequest;
 import org.jose4j.jwa.AlgorithmConstraints;
 import org.jose4j.jwe.ContentEncryptionAlgorithmIdentifiers;
 import org.jose4j.jwe.JsonWebEncryption;
@@ -38,6 +39,7 @@ import static org.vimal.security.v3.enums.AccessTokenClaims.*;
 @Component
 public class AccessTokenUtility {
     private static final long ACCESS_TOKEN_EXPIRES_IN_SECONDS = TimeUnit.MINUTES.toSeconds(30);
+    private static final long ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS = ACCESS_TOKEN_EXPIRES_IN_SECONDS * 1000;
     private static final long REFRESH_TOKEN_EXPIRES_IN_SECONDS = TimeUnit.MINUTES.toSeconds(60 * 24 * 7);
     private static final Duration ACCESS_TOKEN_EXPIRES_IN_DURATION = Duration.ofSeconds(ACCESS_TOKEN_EXPIRES_IN_SECONDS);
     private static final Duration REFRESH_TOKEN_EXPIRES_IN_DURATION = Duration.ofSeconds(REFRESH_TOKEN_EXPIRES_IN_SECONDS);
@@ -49,8 +51,11 @@ public class AccessTokenUtility {
             AlgorithmConstraints.ConstraintType.PERMIT,
             ContentEncryptionAlgorithmIdentifiers.AES_256_CBC_HMAC_SHA_512
     );
+    private static final String X_DEVICE_ID_HEADER = "X-Device-ID";
     private static final String ACCESS_TOKEN_PREFIX = "SECURITY_V3_ACCESS_TOKEN:";
+    private static final String USER_DEVICE_IDS_PREFIX = "SECURITY_V3_USER_DEVICE_IDS:";
     private static final String REFRESH_TOKEN_PREFIX = "SECURITY_V3_REFRESH_TOKEN:";
+    private static final String REFRESH_TOKEN_USER_ID_MAPPING_PREFIX = "SECURITY_V3_REFRESH_TOKEN_USER_ID_MAPPING:";
     private static final String REFRESH_TOKEN_MAPPING_PREFIX = "SECURITY_V3_REFRESH_TOKEN_MAPPING:";
     private final SecretKey signingKey;
     private final SecretKey encryptionKey;
@@ -77,8 +82,10 @@ public class AccessTokenUtility {
         this.genericAesStaticEncryptorDecryptor = genericAesStaticEncryptorDecryptor;
     }
 
-    private Map<String, Object> buildTokenClaims(UserModel user) {
+    private Map<String, Object> buildTokenClaims(UserModel user,
+                                                 HttpServletRequest request) {
         Map<String, Object> claims = new HashMap<>();
+        claims.put(DEVICE_ID.name(), request.getHeader(X_DEVICE_ID_HEADER));
         claims.put(USER_ID.name(), user.getId().toString());
         claims.put(USERNAME.name(), user.getUsername());
         claims.put(EMAIL.name(), user.getEmail());
@@ -121,14 +128,16 @@ public class AccessTokenUtility {
         return jwe.getCompactSerialization();
     }
 
-    private String generateRefreshToken(UserModel user) throws Exception {
-        String encryptedRefreshTokenKey = getEncryptedRefreshTokenKey(user);
+    private String generateRefreshToken(UserModel user,
+                                        HttpServletRequest request) throws Exception {
+        String encryptedRefreshTokenKey = getEncryptedRefreshTokenKey(request);
         String existingEncryptedRefreshToken = redisService.get(encryptedRefreshTokenKey);
         if (existingEncryptedRefreshToken != null) {
             return genericAesRandomEncryptorDecryptor.decrypt(existingEncryptedRefreshToken);
         }
         String refreshToken = UUID.randomUUID().toString();
-        String encryptedRefreshTokenMappingKey = genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_MAPPING_PREFIX + refreshToken);
+        String encryptedRefreshTokenMappingKey = getEncryptedRefreshTokenMappingKey(refreshToken);
+        String encryptedRefreshTokenUserIdMappingKey = getEncryptedRefreshTokenUserIdMappingKey(refreshToken);
         try {
             redisService.save(
                     encryptedRefreshTokenKey,
@@ -137,6 +146,11 @@ public class AccessTokenUtility {
             );
             redisService.save(
                     encryptedRefreshTokenMappingKey,
+                    genericAesRandomEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER)),
+                    REFRESH_TOKEN_EXPIRES_IN_DURATION
+            );
+            redisService.save(
+                    encryptedRefreshTokenUserIdMappingKey,
                     genericAesRandomEncryptorDecryptor.encrypt(user.getId().toString()),
                     REFRESH_TOKEN_EXPIRES_IN_DURATION
             );
@@ -144,61 +158,103 @@ public class AccessTokenUtility {
         } catch (Exception ex) {
             redisService.deleteAll(Set.of(
                     encryptedRefreshTokenKey,
-                    encryptedRefreshTokenMappingKey
+                    encryptedRefreshTokenMappingKey,
+                    encryptedRefreshTokenUserIdMappingKey
             ));
             throw new RuntimeException("Failed to generate refresh token", ex);
         }
     }
 
-    private String getEncryptedRefreshTokenKey(UserModel user) throws Exception {
-        return getEncryptedRefreshTokenKey(user.getId());
+    private String getEncryptedRefreshTokenKey(HttpServletRequest request) throws Exception {
+        return getEncryptedRefreshTokenKey(request.getHeader(X_DEVICE_ID_HEADER));
     }
 
-    private String getEncryptedRefreshTokenKey(UUID userId) throws Exception {
-        return getEncryptedRefreshTokenKey(userId.toString());
+    private String getEncryptedRefreshTokenKey(String deviceId) throws Exception {
+        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_PREFIX + deviceId);
     }
 
-    private String getEncryptedRefreshTokenKey(String userId) throws Exception {
-        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_PREFIX + userId);
+    private String getEncryptedRefreshTokenMappingKey(String refreshToken) throws Exception {
+        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_MAPPING_PREFIX + refreshToken);
     }
 
-    private Map<String, Object> generateAccessToken(UserModel user) throws Exception {
-        String encryptedAccessTokenKey = getEncryptedAccessTokenKey(user);
-        String existingEncryptedAccessToken = redisService.get(encryptedAccessTokenKey);
+    private String getEncryptedRefreshTokenUserIdMappingKey(String refreshToken) throws Exception {
+        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_USER_ID_MAPPING_PREFIX + refreshToken);
+    }
+
+    private Map<String, Object> generateAccessToken(UserModel user,
+                                                    HttpServletRequest request) throws Exception {
+        checkDeviceId(request);
+        String encryptedDeviceIdsKey = getEncryptedDeviceIdsKey(user);
+        String encryptedDeviceId = genericAesStaticEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER));
+        Double score = redisService.getZSetMemberScore(
+                encryptedDeviceIdsKey,
+                encryptedDeviceId
+        );
+        long now = Instant.now().toEpochMilli();
         Map<String, Object> accessToken = new HashMap<>();
-        if (existingEncryptedAccessToken != null) {
-            accessToken.put("access_token", genericAesRandomEncryptorDecryptor.decrypt(existingEncryptedAccessToken));
-            accessToken.put("expires_in_seconds", redisService.getTtl(encryptedAccessTokenKey));
+        String encryptedAccessTokenKey = getEncryptedAccessTokenKey(request);
+        if (score == null || score < now) {
+            redisService.addZSetMember(
+                    encryptedDeviceIdsKey,
+                    encryptedDeviceId,
+                    now + ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS,
+                    ACCESS_TOKEN_EXPIRES_IN_DURATION
+            );
+            String encryptedAccessToken = encryptToken(signToken(buildTokenClaims(
+                    user,
+                    request)));
+            redisService.save(
+                    encryptedAccessTokenKey,
+                    genericAesRandomEncryptorDecryptor.encrypt(encryptedAccessToken),
+                    ACCESS_TOKEN_EXPIRES_IN_DURATION
+            );
+            accessToken.put("access_token", encryptedAccessToken);
+            accessToken.put("expires_in_seconds", ACCESS_TOKEN_EXPIRES_IN_SECONDS);
             accessToken.put("token_type", "Bearer");
             return accessToken;
         }
-        String encryptedAccessToken = encryptToken(signToken(buildTokenClaims(user)));
-        redisService.save(
-                encryptedAccessTokenKey,
-                genericAesRandomEncryptorDecryptor.encrypt(encryptedAccessToken),
-                ACCESS_TOKEN_EXPIRES_IN_DURATION
-        );
-        accessToken.put("access_token", encryptedAccessToken);
-        accessToken.put("expires_in_seconds", ACCESS_TOKEN_EXPIRES_IN_SECONDS);
+        accessToken.put("access_token", genericAesRandomEncryptorDecryptor.decrypt(redisService.get(encryptedAccessTokenKey)));
+        accessToken.put("expires_in_seconds", redisService.getTtl(encryptedAccessTokenKey));
         accessToken.put("token_type", "Bearer");
         return accessToken;
     }
 
-    private String getEncryptedAccessTokenKey(UserModel user) throws Exception {
-        return getEncryptedAccessTokenKey(user.getId());
+    private void checkDeviceId(HttpServletRequest request) {
+        if (request.getHeader(X_DEVICE_ID_HEADER) == null || request.getHeader(X_DEVICE_ID_HEADER).isBlank()) {
+            throw new SimpleBadRequestException("X-Device-ID header is required");
+        }
     }
 
-    private String getEncryptedAccessTokenKey(UUID userId) throws Exception {
-        return getEncryptedAccessTokenKey(userId.toString());
+    private String getEncryptedDeviceIdsKey(UserModel user) throws Exception {
+        return getEncryptedDeviceIdsKey(user.getId());
     }
 
-    private String getEncryptedAccessTokenKey(String userId) throws Exception {
-        return genericAesStaticEncryptorDecryptor.encrypt(ACCESS_TOKEN_PREFIX + userId);
+    private String getEncryptedDeviceIdsKey(UUID userId) throws Exception {
+        return getEncryptedDeviceIdsKey(userId.toString());
     }
 
-    public Map<String, Object> generateTokens(UserModel user) throws Exception {
-        Map<String, Object> tokens = generateAccessToken(user);
-        tokens.put("refresh_token", generateRefreshToken(user));
+    private String getEncryptedDeviceIdsKey(String userId) throws Exception {
+        return genericAesStaticEncryptorDecryptor.encrypt(USER_DEVICE_IDS_PREFIX + userId);
+    }
+
+    private String getEncryptedAccessTokenKey(HttpServletRequest request) throws Exception {
+        return getEncryptedAccessTokenKey(request.getHeader(X_DEVICE_ID_HEADER));
+    }
+
+    private String getEncryptedAccessTokenKey(String deviceId) throws Exception {
+        return genericAesStaticEncryptorDecryptor.encrypt(ACCESS_TOKEN_PREFIX + deviceId);
+    }
+
+    public Map<String, Object> generateTokens(UserModel user,
+                                              HttpServletRequest request) throws Exception {
+        Map<String, Object> tokens = generateAccessToken(
+                user,
+                request
+        );
+        tokens.put("refresh_token", generateRefreshToken(
+                user,
+                request
+        ));
         user.recordSuccessfulLogin();
         userRepo.save(user);
         return tokens;
@@ -220,8 +276,15 @@ public class AccessTokenUtility {
     }
 
     @SuppressWarnings("unchecked")
-    public UserDetailsImpl verifyAccessToken(String accessToken) throws Exception {
+    public UserDetailsImpl verifyAccessToken(String accessToken,
+                                             HttpServletRequest request) throws Exception {
         Claims claims = parseToken(decryptToken(accessToken));
+        if (!claims.get(
+                DEVICE_ID.name(),
+                String.class
+        ).equals(request.getHeader(X_DEVICE_ID_HEADER))) {
+            throw new UnauthorizedException("Invalid token");
+        }
         if (Instant.parse(claims.get(
                                 ISSUED_AT.name(),
                                 String.class
@@ -242,7 +305,7 @@ public class AccessTokenUtility {
                 USER_ID.name(),
                 String.class
         );
-        if (redisService.get(getEncryptedAccessTokenKey(userId)) == null) {
+        if (redisService.get(getEncryptedAccessTokenKey(request)) == null) {
             throw new UnauthorizedException("Invalid token");
         }
         UserModel user = new UserModel();
@@ -281,23 +344,25 @@ public class AccessTokenUtility {
         return new UserDetailsImpl(user, authorities);
     }
 
-    public void revokeAccessToken(UserModel user) throws Exception {
-        redisService.delete(getEncryptedAccessTokenKey(user));
-    }
-
-    private String getEncryptedRefreshTokenMappingKey(String encryptedRefreshToken) throws Exception {
-        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_MAPPING_PREFIX + genericAesRandomEncryptorDecryptor.decrypt(encryptedRefreshToken));
+    public void revokeAccessToken(UserModel user,
+                                  HttpServletRequest request) throws Exception {
+        String encryptedAccessTokenKey = getEncryptedAccessTokenKey(request);
+        redisService.removeZSetMember(
+                getEncryptedDeviceIdsKey(user),
+                encryptedAccessTokenKey
+        );
+        redisService.delete(encryptedAccessTokenKey);
     }
 
     public void revokeTokens(Set<UserModel> users) throws Exception {
         Set<String> encryptedKeys = new HashSet<>();
         Set<String> encryptedRefreshTokenKeys = new HashSet<>();
-        String tempStr;
         for (UserModel user : users) {
-            encryptedKeys.add(getEncryptedAccessTokenKey(user));
-            tempStr = getEncryptedRefreshTokenKey(user);
-            encryptedKeys.add(tempStr);
-            encryptedRefreshTokenKeys.add(tempStr);
+            addMembers(
+                    getEncryptedDeviceIdsKey(user),
+                    encryptedKeys,
+                    encryptedRefreshTokenKeys
+            );
         }
         proceedAndRevokeTokens(
                 encryptedKeys,
@@ -305,11 +370,28 @@ public class AccessTokenUtility {
         );
     }
 
+    private void addMembers(String encryptedDeviceIdsKey,
+                            Set<String> encryptedKeys,
+                            Set<String> encryptedRefreshTokenKeys) throws Exception {
+        String tempStr;
+        encryptedKeys.add(encryptedDeviceIdsKey);
+        Set<String> members = redisService.getAllZSetMembers(encryptedDeviceIdsKey);
+        if (members != null && !members.isEmpty()) {
+            for (String encryptedDeviceId : members) {
+                tempStr = genericAesStaticEncryptorDecryptor.decrypt(encryptedDeviceId);
+                encryptedKeys.add(getEncryptedAccessTokenKey(tempStr));
+                tempStr = getEncryptedRefreshTokenKey(tempStr);
+                encryptedKeys.add(tempStr);
+                encryptedRefreshTokenKeys.add(tempStr);
+            }
+        }
+    }
+
     private void proceedAndRevokeTokens(Set<String> encryptedKeys,
                                         Set<String> encryptedRefreshTokenKeys) throws Exception {
         for (String encryptedRefreshToken : redisService.getAll(encryptedRefreshTokenKeys)) {
             if (encryptedRefreshToken != null) {
-                encryptedKeys.add(getEncryptedRefreshTokenMappingKey(encryptedRefreshToken));
+                encryptedKeys.add(getEncryptedRefreshTokenMappingKeyUsingEncryptedRefreshToken(encryptedRefreshToken));
             }
         }
         if (!encryptedKeys.isEmpty()) {
@@ -317,15 +399,19 @@ public class AccessTokenUtility {
         }
     }
 
+    private String getEncryptedRefreshTokenMappingKeyUsingEncryptedRefreshToken(String encryptedRefreshToken) throws Exception {
+        return getEncryptedRefreshTokenMappingKey(genericAesRandomEncryptorDecryptor.decrypt(encryptedRefreshToken));
+    }
+
     public void revokeTokensByUsersIds(Set<UUID> userIds) throws Exception {
         Set<String> encryptedKeys = new HashSet<>();
         Set<String> encryptedRefreshTokenKeys = new HashSet<>();
-        String tempStr;
         for (UUID userId : userIds) {
-            encryptedKeys.add(getEncryptedAccessTokenKey(userId));
-            tempStr = getEncryptedRefreshTokenKey(userId);
-            encryptedKeys.add(tempStr);
-            encryptedRefreshTokenKeys.add(tempStr);
+            addMembers(
+                    getEncryptedDeviceIdsKey(userId),
+                    encryptedKeys,
+                    encryptedRefreshTokenKeys
+            );
         }
         proceedAndRevokeTokens(
                 encryptedKeys,
@@ -334,36 +420,48 @@ public class AccessTokenUtility {
     }
 
     public void revokeRefreshToken(String refreshToken) throws Exception {
-        String encryptedRefreshTokenMappingKey = getEncryptedRefreshTokenMappingKeyUnencryptedRefreshToken(refreshToken);
+        String encryptedRefreshTokenMappingKey = getEncryptedRefreshTokenMappingKey(refreshToken);
         redisService.deleteAll(Set.of(
                         encryptedRefreshTokenMappingKey,
-                        genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_PREFIX + getUserId(encryptedRefreshTokenMappingKey))
+                        getEncryptedRefreshTokenKey(getDeviceId(encryptedRefreshTokenMappingKey))
                 )
         );
     }
 
-    private String getEncryptedRefreshTokenMappingKeyUnencryptedRefreshToken(String refreshToken) throws Exception {
-        return genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_MAPPING_PREFIX + refreshToken);
-    }
-
-    private String getUserId(String encryptedRefreshTokenMappingKey) throws Exception {
-        String encryptedUserId = redisService.get(encryptedRefreshTokenMappingKey);
-        if (encryptedUserId != null) {
-            return genericAesRandomEncryptorDecryptor.decrypt(encryptedUserId);
+    private String getDeviceId(String encryptedRefreshTokenMappingKey) throws Exception {
+        String encryptedDeviceId = redisService.get(encryptedRefreshTokenMappingKey);
+        if (encryptedDeviceId != null) {
+            return genericAesRandomEncryptorDecryptor.decrypt(encryptedDeviceId);
         }
         throw new SimpleBadRequestException("Invalid refresh token");
     }
 
-    private UserModel verifyRefreshToken(String refreshToken) throws Exception {
-        String userId = getUserId(getEncryptedRefreshTokenMappingKeyUnencryptedRefreshToken(refreshToken));
-        String encryptedRefreshToken = redisService.get(genericAesStaticEncryptorDecryptor.encrypt(REFRESH_TOKEN_PREFIX + userId));
+    private UserModel verifyRefreshToken(String refreshToken,
+                                         HttpServletRequest request) throws Exception {
+        checkDeviceId(request);
+        String deviceId = getDeviceId(getEncryptedRefreshTokenMappingKey(refreshToken));
+        if (!deviceId.equals(request.getHeader(X_DEVICE_ID_HEADER))) {
+            throw new SimpleBadRequestException("Invalid refresh token");
+        }
+        String encryptedRefreshToken = redisService.get(getEncryptedRefreshTokenKey(deviceId));
         if (encryptedRefreshToken != null) {
-            return userRepo.findById(UUID.fromString(userId)).orElseThrow(() -> new SimpleBadRequestException("Invalid refresh token"));
+            String encryptedUserId = redisService.get(getEncryptedRefreshTokenUserIdMappingKey(refreshToken));
+            if (encryptedUserId != null) {
+                return userRepo.findById(UUID.fromString(genericAesRandomEncryptorDecryptor.decrypt(encryptedUserId)))
+                        .orElseThrow(() -> new SimpleBadRequestException("Invalid refresh token"));
+            }
         }
         throw new SimpleBadRequestException("Invalid refresh token");
     }
 
-    public Map<String, Object> refreshAccessToken(String refreshToken) throws Exception {
-        return generateAccessToken(verifyRefreshToken(refreshToken));
+    public Map<String, Object> refreshAccessToken(String refreshToken,
+                                                  HttpServletRequest request) throws Exception {
+        return generateAccessToken(
+                verifyRefreshToken(
+                        refreshToken,
+                        request
+                ),
+                request
+        );
     }
 }
