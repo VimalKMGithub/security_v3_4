@@ -194,7 +194,7 @@ public class AuthenticationService {
 
     public Map<String, String> logoutAllDevices() throws Exception {
         accessTokenUtility.revokeTokens(Set.of(getCurrentAuthenticatedUser()));
-        return Map.of("message", "Logout successful");
+        return Map.of("message", "Logout from all devices successful");
     }
 
     public Map<String, Object> refreshAccessToken(String refreshToken,
