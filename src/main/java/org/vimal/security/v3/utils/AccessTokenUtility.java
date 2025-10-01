@@ -248,7 +248,8 @@ public class AccessTokenUtility {
             }
             String encryptedAccessToken = encryptToken(signToken(buildTokenClaims(
                     user,
-                    request)));
+                    request
+            )));
             redisService.save(
                     encryptedAccessTokenKey,
                     genericAesRandomEncryptorDecryptor.encrypt(encryptedAccessToken),
