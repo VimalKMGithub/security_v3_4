@@ -422,7 +422,8 @@ public class AccessTokenUtility {
         String encryptedRefreshTokenMappingKey = getEncryptedRefreshTokenMappingKey(refreshToken);
         redisService.deleteAll(Set.of(
                         encryptedRefreshTokenMappingKey,
-                        getEncryptedRefreshTokenKey(getDeviceId(encryptedRefreshTokenMappingKey))
+                        getEncryptedRefreshTokenKey(getDeviceId(encryptedRefreshTokenMappingKey)),
+                        getEncryptedRefreshTokenUserIdMappingKey(refreshToken)
                 )
         );
     }
