@@ -346,12 +346,11 @@ public class AccessTokenUtility {
 
     public void revokeAccessToken(UserModel user,
                                   HttpServletRequest request) throws Exception {
-        String encryptedAccessTokenKey = getEncryptedAccessTokenKey(request);
         redisService.removeZSetMember(
                 getEncryptedDeviceIdsKey(user),
-                encryptedAccessTokenKey
+                genericAesStaticEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER))
         );
-        redisService.delete(encryptedAccessTokenKey);
+        redisService.delete(getEncryptedAccessTokenKey(request));
     }
 
     public void logout(UserModel user,
@@ -361,7 +360,7 @@ public class AccessTokenUtility {
         keys.add(encryptedAccessTokenKey);
         redisService.removeZSetMember(
                 getEncryptedDeviceIdsKey(user),
-                encryptedAccessTokenKey
+                genericAesStaticEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER))
         );
         String encryptedRefreshTokenKey = getEncryptedRefreshTokenKey(request);
         keys.add(encryptedRefreshTokenKey);
