@@ -61,16 +61,17 @@ public class RedisService {
                                  String member,
                                  double score,
                                  Duration timeToLive) {
-        redisTemplate.expire(
-                key,
-                timeToLive
-        );
-        return redisTemplate.opsForZSet()
+        Boolean isAdded = redisTemplate.opsForZSet()
                 .add(
                         key,
                         member,
                         score
                 );
+        redisTemplate.expire(
+                key,
+                timeToLive
+        );
+        return isAdded;
     }
 
     public Set<String> getAllZSetMembers(String key) {
