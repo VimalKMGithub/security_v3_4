@@ -40,6 +40,7 @@ import static org.vimal.security.v3.enums.AccessTokenClaims.*;
 public class AccessTokenUtility {
     private static final long ACCESS_TOKEN_EXPIRES_IN_SECONDS = TimeUnit.MINUTES.toSeconds(30);
     private static final long ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS = ACCESS_TOKEN_EXPIRES_IN_SECONDS * 1000;
+    private static final long MILLI_SECONDS_TO_ADD_IN_NOW = TimeUnit.MINUTES.toMillis(1);
     private static final long REFRESH_TOKEN_EXPIRES_IN_SECONDS = TimeUnit.MINUTES.toSeconds(60 * 24 * 7);
     private static final Duration ACCESS_TOKEN_EXPIRES_IN_DURATION = Duration.ofSeconds(ACCESS_TOKEN_EXPIRES_IN_SECONDS);
     private static final Duration REFRESH_TOKEN_EXPIRES_IN_DURATION = Duration.ofSeconds(REFRESH_TOKEN_EXPIRES_IN_SECONDS);
@@ -220,7 +221,7 @@ public class AccessTokenUtility {
                 user,
                 request
         );
-        if (score == null || score < now) {
+        if (score == null || score < now + MILLI_SECONDS_TO_ADD_IN_NOW) {
             redisService.addZSetMember(
                     encryptedDeviceIdsKey,
                     encryptedDeviceId,
