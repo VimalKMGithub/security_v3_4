@@ -89,10 +89,6 @@ public class RedisService {
                         key,
                         member
                 );
-        Long size = getZSetSize(key);
-        if (size != null && size == 0) {
-            delete(key);
-        }
     }
 
     public Double getZSetMemberScore(String key,
@@ -102,11 +98,6 @@ public class RedisService {
                         key,
                         member
                 );
-    }
-
-    private Long getZSetSize(String key) {
-        return redisTemplate.opsForZSet()
-                .size(key);
     }
 
     public void flushDb() {
