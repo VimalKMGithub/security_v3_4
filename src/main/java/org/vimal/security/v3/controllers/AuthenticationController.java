@@ -30,8 +30,13 @@ public class AuthenticationController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Map<String, String>> logout() throws Exception {
-        return ResponseEntity.ok(authenticationService.logout());
+    public ResponseEntity<Map<String, String>> logout(HttpServletRequest request) throws Exception {
+        return ResponseEntity.ok(authenticationService.logout(request));
+    }
+
+    @PostMapping("/logout/allDevices")
+    public ResponseEntity<Map<String, String>> logoutAllDevices() throws Exception {
+        return ResponseEntity.ok(authenticationService.logoutAllDevices());
     }
 
     @PostMapping("/refresh/accessToken")

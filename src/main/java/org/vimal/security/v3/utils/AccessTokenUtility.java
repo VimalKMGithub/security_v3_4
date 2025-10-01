@@ -354,6 +354,26 @@ public class AccessTokenUtility {
         redisService.delete(encryptedAccessTokenKey);
     }
 
+    public void logout(UserModel user,
+                       HttpServletRequest request) throws Exception {
+        Set<String> keys = new HashSet<>();
+        String encryptedAccessTokenKey = getEncryptedAccessTokenKey(request);
+        keys.add(encryptedAccessTokenKey);
+        redisService.removeZSetMember(
+                getEncryptedDeviceIdsKey(user),
+                encryptedAccessTokenKey
+        );
+        String encryptedRefreshTokenKey = getEncryptedRefreshTokenKey(request);
+        keys.add(encryptedRefreshTokenKey);
+        String encryptedRefreshToken = redisService.get(encryptedRefreshTokenKey);
+        if (encryptedRefreshToken != null) {
+            String refreshToken = genericAesRandomEncryptorDecryptor.decrypt(encryptedRefreshToken);
+            keys.add(getEncryptedRefreshTokenMappingKey(refreshToken));
+            keys.add(getEncryptedRefreshTokenUserIdMappingKey(refreshToken));
+        }
+        redisService.deleteAll(keys);
+    }
+
     public void revokeTokens(Set<UserModel> users) throws Exception {
         Set<String> encryptedKeys = new HashSet<>();
         Set<String> encryptedRefreshTokenKeys = new HashSet<>();

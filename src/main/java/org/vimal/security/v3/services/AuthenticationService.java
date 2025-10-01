@@ -184,7 +184,15 @@ public class AuthenticationService {
         userRepo.save(user);
     }
 
-    public Map<String, String> logout() throws Exception {
+    public Map<String, String> logout(HttpServletRequest request) throws Exception {
+        accessTokenUtility.logout(
+                getCurrentAuthenticatedUser(),
+                request
+        );
+        return Map.of("message", "Logout successful");
+    }
+
+    public Map<String, String> logoutAllDevices() throws Exception {
         accessTokenUtility.revokeTokens(Set.of(getCurrentAuthenticatedUser()));
         return Map.of("message", "Logout successful");
     }
