@@ -74,6 +74,17 @@ public class RedisService {
         return isAdded;
     }
 
+    public void updateZSetMemberScore(String key,
+                                      String member,
+                                      double score) {
+        redisTemplate.opsForZSet()
+                .add(
+                        key,
+                        member,
+                        score
+                );
+    }
+
     public Set<String> getAllZSetMembers(String key) {
         return redisTemplate.opsForZSet()
                 .range(

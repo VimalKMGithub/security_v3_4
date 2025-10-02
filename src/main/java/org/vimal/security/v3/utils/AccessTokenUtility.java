@@ -417,9 +417,10 @@ public class AccessTokenUtility {
 
     public void revokeAccessToken(UserModel user,
                                   HttpServletRequest request) throws Exception {
-        redisService.removeZSetMember(
+        redisService.updateZSetMemberScore(
                 getEncryptedDeviceIdsKey(user),
-                genericAesStaticEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER))
+                genericAesStaticEncryptorDecryptor.encrypt(request.getHeader(X_DEVICE_ID_HEADER)),
+                Instant.now().toEpochMilli() - ACCESS_TOKEN_EXPIRES_IN_MILLI_SECONDS
         );
         redisService.delete(getEncryptedAccessTokenKey(
                 user,
