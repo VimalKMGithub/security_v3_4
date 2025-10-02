@@ -346,6 +346,7 @@ public class AccessTokenUtility {
     @SuppressWarnings("unchecked")
     public UserDetailsImpl verifyAccessToken(String accessToken,
                                              HttpServletRequest request) throws Exception {
+        checkDeviceId(request);
         Claims claims = parseToken(decryptToken(accessToken));
         if (!claims.get(
                 DEVICE_ID.name(),
@@ -359,7 +360,7 @@ public class AccessTokenUtility {
                         )
                 )
                 .isAfter(Instant.now())) {
-            throw new UnauthorizedException("Invalid token");
+            throw new UnauthorizedException("Token for future");
         }
         if (Instant.parse(claims.get(
                                 EXPIRATION.name(),
@@ -367,7 +368,7 @@ public class AccessTokenUtility {
                         )
                 )
                 .isBefore(Instant.now())) {
-            throw new UnauthorizedException("Invalid token");
+            throw new UnauthorizedException("Token expired");
         }
         String userId = claims.get(
                 USER_ID.name(),
